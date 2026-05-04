@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WA Node API - Bulk Sender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white">
+  <div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">🔥 WA Node API Bulk Sender</h1>
+    
+    <a href="/qr" target="_blank" 
+       class="bg-green-600 px-6 py-3 rounded-lg inline-block mb-8">
+       📱 QR Code Scan Karo
+    </a>
+
+    <div class="bg-gray-800 p-6 rounded-xl">
+      <input id="number" placeholder="Number (e.g. 919876543210)" 
+             class="w-full p-3 bg-gray-700 rounded mb-4">
+      
+      <textarea id="message" placeholder="Message likho..." rows="4"
+                class="w-full p-3 bg-gray-700 rounded mb-4"></textarea>
+
+      <input type="file" id="file" class="mb-4">
+
+      <button onclick="sendMessage()" 
+              class="bg-blue-600 hover:bg-blue-700 px-8 py-3 rounded-lg">
+        Send Message
+      </button>
+    </div>
+  </div>
+
+  <script>
+    async function sendMessage() {
+      const number = document.getElementById('number').value;
+      const message = document.getElementById('message').value;
+      const fileInput = document.getElementById('file');
+
+      if (!number || !message) {
+        alert("Number aur Message daalo!");
+        return;
+      }
+
+      if (fileInput.files.length > 0) {
+        const formData = new FormData();
+        formData.append('number', number);
+        formData.append('caption', message);
+        formData.append('file', fileInput.files[0]);
+
+        await fetch('/send-media', { method: 'POST', body: formData });
+      } else {
+        await fetch('/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number, message })
+        });
+      }
+      alert("Message bhej diya!");
+    }
+  </script>
+</body>
+</html>
