@@ -13,12 +13,13 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Serve static files (index.html)
+app.use(express.static('.'));
+
 let sock = null;
 let connectionStatus = "disconnected";
 let currentQR = null;
-let pairingCode = null;
 
-// Connect with Pairing Code Support
 async function connectToWhatsApp() {
     try {
         const { state, saveCreds } = await useMultiFileAuthState('sessions');
@@ -27,41 +28,33 @@ async function connectToWhatsApp() {
             auth: state,
             printQRInTerminal: true,
             markRead: true,
+            retryRequestDelay: 5000,
+            browser: ['Chrome', 'Desktop', '1.0'],
         });
 
         sock.ev.on('connection.update', async (update) => {
-            const { connection, qr, lastDisconnect } = update;
+            const { connection, qr } = update;
 
             if (qr) {
                 currentQR = await QRCode.toDataURL(qr);
                 connectionStatus = "qr";
-                console.log("📱 QR Generated");
+                console.log("📱 QR CODE GENERATED");
             }
 
             if (connection === 'open') {
                 connectionStatus = "connected";
                 currentQR = null;
-                pairingCode = null;
-                console.log("✅ WhatsApp Connected!");
+                console.log("✅ WhatsApp Connected Successfully!");
             }
 
             if (connection === 'close') {
                 connectionStatus = "disconnected";
-                setTimeout(connectToWhatsApp, 5000);
+                currentQR = null;
+                setTimeout(connectToWhatsApp, 8000);
             }
         });
 
         sock.ev.on('creds.update', saveCreds);
-
-        // Pairing Code Generate (for servers)
-        if (!sock.authState.creds.registered) {
-            setTimeout(async () => {
-                try {
-                    pairingCode = await sock.requestPairingCode(""); // Phone number optional
-                    console.log("🔢 Pairing Code:", pairingCode);
-                } catch (e) {}
-            }, 3000);
-        }
 
     } catch (error) {
         console.error("Error:", error);
@@ -70,7 +63,7 @@ async function connectToWhatsApp() {
 
 // ==================== ROUTES ====================
 app.get('/', (req, res) => {
-    res.json({ success: true, message: "WA Node API Running" });
+    res.sendFile('index.html', { root: '.' });
 });
 
 app.get('/status', (req, res) => {
@@ -80,35 +73,33 @@ app.get('/status', (req, res) => {
 app.get('/qr', (req, res) => {
     if (currentQR) {
         res.json({ status: "qr", qr: currentQR });
-    } else if (pairingCode) {
-        res.json({ 
-            status: "pairing", 
-            pairingCode: pairingCode,
-            message: "WhatsApp mein jaake Pairing Code se connect karo"
-        });
+    } else if (connectionStatus === "connected") {
+        res.json({ status: "connected", message: "Already Connected" });
     } else {
-        connectToWhatsApp();
+        if (!sock) connectToWhatsApp();
         res.json({ 
-            status: "connecting", 
-            message: "Connecting... Refresh after 10 seconds" 
+            status: connectionStatus, 
+            message: "Connecting... Refresh after few seconds" 
         });
     }
 });
 
 app.post('/send', async (req, res) => {
     const { number, message } = req.body;
+
     if (connectionStatus !== "connected") {
-        return res.status(400).json({ error: "Not connected yet" });
+        return res.status(400).json({ error: "WhatsApp not connected" });
     }
+
     try {
         await sock.sendMessage(`${number}@s.whatsapp.net`, { text: message });
-        res.json({ success: true });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+        res.json({ success: true, message: "Message sent successfully!" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
     connectToWhatsApp();
 });
