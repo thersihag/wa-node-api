@@ -1,102 +1,108 @@
 import express from 'express';
+import { Client, MessageMedia, LocalAuth } from 'whatsapp-web.js';
+import qrcode from 'qrcode';
+import multer from 'multer';
 import cors from 'cors';
-import QRCode from 'qrcode';
-import dotenv from 'dotenv';
-import makeWASocket from '@whiskeysockets/baileys';
-import { useMultiFileAuthState } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors());
 app.use(express.json());
-app.use(express.static('.'));   // index.html serve karne ke liye
+app.use(express.static('public')); // index.html ke liye
 
-let sock = null;
-let connectionStatus = "disconnected";
-let currentQR = null;
+const upload = multer({ dest: 'uploads/' });
 
-async function connectToWhatsApp() {
-    try {
-        console.log("🔄 WhatsApp Connection Starting...");
+// Global client
+let client;
+let isReady = false;
 
-        const { state, saveCreds } = await useMultiFileAuthState('sessions');
+// Initialize WhatsApp Client
+function initializeClient() {
+    client = new Client({
+        authStrategy: new LocalAuth(), // session save karega
+        puppeteer: { 
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            headless: true
+        }
+    });
 
-        sock = makeWASocket({
-            auth: state,
-            printQRInTerminal: true,
-            markRead: true,
-            retryRequestDelay: 5000,
-            browser: ['Chrome', 'Desktop', '1.0'],
-        });
+    client.on('qr', async (qr) => {
+        console.log('QR Code Received!');
+        const qrImage = await qrcode.toDataURL(qr);
+        
+        // Public folder mein QR save kar do
+        fs.writeFileSync(path.join(__dirname, 'public', 'qr.png'), 
+            qrImage.replace(/^data:image\/png;base64,/, ''), 'base64');
+    });
 
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, qr } = update;
+    client.on('ready', () => {
+        console.log('✅ WhatsApp is Ready!');
+        isReady = true;
+    });
 
-            if (qr) {
-                currentQR = await QRCode.toDataURL(qr);
-                connectionStatus = "qr";
-                console.log("✅ QR CODE GENERATED SUCCESSFULLY");
-            }
+    client.on('authenticated', () => {
+        console.log('✅ Authenticated');
+    });
 
-            if (connection === 'open') {
-                connectionStatus = "connected";
-                currentQR = null;
-                console.log("🎉 WHATSAPP CONNECTED SUCCESSFULLY!");
-            }
-
-            if (connection === 'close') {
-                connectionStatus = "disconnected";
-                currentQR = null;
-                console.log("❌ Connection Closed - Reconnecting...");
-                setTimeout(connectToWhatsApp, 7000);
-            }
-        });
-
-        sock.ev.on('creds.update', saveCreds);
-
-    } catch (error) {
-        console.error("Connection Error:", error);
-    }
+    client.initialize();
 }
 
-// ==================== ROUTES ====================
 app.get('/', (req, res) => {
-    res.sendFile('index.html', { root: '.' });
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// QR Code page
 app.get('/qr', (req, res) => {
-    if (currentQR) {
-        res.json({ status: "qr", qr: currentQR });
-    } else if (connectionStatus === "connected") {
-        res.json({ status: "connected", message: "Connected" });
+    if (fs.existsSync(path.join(__dirname, 'public', 'qr.png'))) {
+        res.send(`
+            <h2>Scan this QR Code with WhatsApp</h2>
+            <img src="/qr.png" width="300"><br><br>
+            <a href="/">Back to Dashboard</a>
+        `);
     } else {
-        if (!sock) connectToWhatsApp();
-        res.json({ 
-            status: "connecting", 
-            message: "Connecting to WhatsApp..." 
-        });
+        res.send('QR not generated yet. Refresh after 5-10 seconds.');
     }
 });
 
+// Send Text Message
 app.post('/send', async (req, res) => {
+    if (!isReady) return res.status(400).json({ error: "WhatsApp not ready" });
+
     const { number, message } = req.body;
-
-    if (connectionStatus !== "connected") {
-        return res.status(400).json({ error: "WhatsApp not connected. Please scan QR first." });
-    }
-
     try {
-        await sock.sendMessage(`${number}@s.whatsapp.net`, { text: message });
-        res.json({ success: true, message: "Message sent successfully" });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+        const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
+        await client.sendMessage(chatId, message);
+        res.json({ success: true, message: "Sent!" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
+// Send Media
+app.post('/send-media', upload.single('file'), async (req, res) => {
+    if (!isReady) return res.status(400).json({ error: "WhatsApp not ready" });
+
+    const { number, caption } = req.body;
+    try {
+        const media = MessageMedia.fromFilePath(req.file.path);
+        const chatId = `${number}@c.us`;
+        await client.sendMessage(chatId, media, { caption });
+        
+        // Delete file after sending
+        fs.unlinkSync(req.file.path);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    connectToWhatsApp();
+    initializeClient();
 });
