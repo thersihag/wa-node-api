@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <title>WA Bulk Sender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white p-6">
+
+  <h1 class="text-3xl mb-6">WhatsApp Bulk Sender</h1>
+
+  <!-- QR Code Section -->
+  <button onclick="getQR()" 
+          class="bg-green-600 px-6 py-3 rounded-lg mb-8">
+    📱 QR Code Generate Karo
+  </button>
+
+  <img id="qrimg" class="border-2 border-green-500 p-2" width="280">
+
+  <hr class="my-8">
+
+  <!-- Send Message -->
+  <input id="number" placeholder="Number with country code (919xxxxxxxxx)" 
+         class="block w-full p-3 bg-gray-800 rounded mb-4">
+
+  <textarea id="message" placeholder="Message yahan likho..." rows="4"
+            class="block w-full p-3 bg-gray-800 rounded mb-4"></textarea>
+
+  <button onclick="sendText()" 
+          class="bg-blue-600 px-8 py-3 rounded-lg">
+    Send Text Message
+  </button>
+
+  <script>
+    const BASE_URL = "https://wa-api-vercel.vercel.app";   // ← Apna Vercel URL yahan daal
+
+    // QR Code Lene ke liye
+    async function getQR() {
+      const res = await fetch(`${BASE_URL}/api/qr`);
+      const data = await res.json();
+      
+      if (data.qr) {
+        document.getElementById('qrimg').src = data.qr;
+      } else {
+        alert(data.message || "QR nahi mila, thodi der baad try karo");
+      }
+    }
+
+    // Text Message bhejne ke liye
+    async function sendText() {
+      const number = document.getElementById('number').value.trim();
+      const message = document.getElementById('message').value.trim();
+
+      if (!number || !message) {
+        alert("Number aur Message dono daalo");
+        return;
+      }
+
+      const res = await fetch(`${BASE_URL}/api/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ number, message })
+      });
+
+      const data = await res.json();
+      alert(data.success ? "Message bhej diya!" : "Error: " + data.error);
+    }
+  </script>
+</body>
+</html>
