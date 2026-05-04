@@ -12,9 +12,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-
-// Serve static files (index.html)
-app.use(express.static('.'));
+app.use(express.static('.'));   // index.html serve karne ke liye
 
 let sock = null;
 let connectionStatus = "disconnected";
@@ -44,7 +42,7 @@ async function connectToWhatsApp() {
             if (connection === 'open') {
                 connectionStatus = "connected";
                 currentQR = null;
-                console.log("✅ WhatsApp Connected Successfully!");
+                console.log("✅ WhatsApp Connected!");
             }
 
             if (connection === 'close') {
@@ -57,49 +55,40 @@ async function connectToWhatsApp() {
         sock.ev.on('creds.update', saveCreds);
 
     } catch (error) {
-        console.error("Error:", error);
+        console.error(error);
     }
 }
 
-// ==================== ROUTES ====================
+// Routes
 app.get('/', (req, res) => {
     res.sendFile('index.html', { root: '.' });
-});
-
-app.get('/status', (req, res) => {
-    res.json({ status: connectionStatus });
 });
 
 app.get('/qr', (req, res) => {
     if (currentQR) {
         res.json({ status: "qr", qr: currentQR });
     } else if (connectionStatus === "connected") {
-        res.json({ status: "connected", message: "Already Connected" });
+        res.json({ status: "connected", message: "✅ Connected" });
     } else {
         if (!sock) connectToWhatsApp();
-        res.json({ 
-            status: connectionStatus, 
-            message: "Connecting... Refresh after few seconds" 
-        });
+        res.json({ status: "connecting", message: "Connecting..." });
     }
 });
 
 app.post('/send', async (req, res) => {
     const { number, message } = req.body;
-
     if (connectionStatus !== "connected") {
-        return res.status(400).json({ error: "WhatsApp not connected" });
+        return res.status(400).json({ error: "Not connected" });
     }
-
     try {
         await sock.sendMessage(`${number}@s.whatsapp.net`, { text: message });
-        res.json({ success: true, message: "Message sent successfully!" });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running → http://localhost:${PORT}`);
     connectToWhatsApp();
 });
