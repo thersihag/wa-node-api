@@ -1,4 +1,5 @@
 import express from 'express';
+import { Client, MessageMedia, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 import multer from 'multer';
 import cors from 'cors';
@@ -9,24 +10,21 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// whatsapp-web.js ko sahi tarike se import kar rahe hain
-import whatsapp from 'whatsapp-web.js';
-const { Client, MessageMedia, LocalAuth } = whatsapp;
-
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));   // Frontend kahin se bhi hit kar sake
 app.use(express.json());
-app.use(express.static('public'));
 
 const upload = multer({ dest: 'uploads/' });
 
 // Global variables
 let client;
 let isReady = false;
+let qrCodeData = null;   // QR code base64 store karne ke liye
 
+// ==================== WhatsApp Client ====================
 function initializeClient() {
     client = new Client({
-        authStrategy: new LocalAuth(), 
+        authStrategy: new LocalAuth({ clientId: "bulk-sender" }),
         puppeteer: { 
             args: [
                 '--no-sandbox',
@@ -39,60 +37,54 @@ function initializeClient() {
                 '--disable-gpu'
             ],
             headless: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
         }
     });
 
     client.on('qr', async (qr) => {
-        console.log('QR Code Received!');
-        try {
-            const qrImage = await qrcode.toDataURL(qr);
-            fs.writeFileSync(path.join(__dirname, 'public', 'qr.png'), 
-                qrImage.replace(/^data:image\/png;base64,/, ''), 'base64');
-            console.log('✅ QR saved to public/qr.png');
-        } catch (err) {
-            console.error('QR save error:', err);
-        }
+        console.log('QR Received');
+        qrCodeData = await qrcode.toDataURL(qr);
     });
 
     client.on('ready', () => {
-        console.log('✅ WhatsApp Client is Ready!');
+        console.log('✅ WhatsApp Ready!');
         isReady = true;
+        qrCodeData = null;
     });
 
-    client.on('authenticated', () => {
-        console.log('✅ WhatsApp Authenticated Successfully');
-    });
+    client.on('authenticated', () => console.log('✅ Authenticated'));
+    client.on('disconnected', () => { isReady = false; });
 
     client.initialize();
 }
 
-// Routes
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// ==================== Routes ====================
+
+// Check Status
+app.get('/status', (req, res) => {
+    res.json({ ready: isReady, hasQR: !!qrCodeData });
 });
 
-app.get('/qr', (req, res) => {
-    const qrPath = path.join(__dirname, 'public', 'qr.png');
-    if (fs.existsSync(qrPath)) {
-        res.send(`
-            <h2>WhatsApp se QR Code Scan Karo</h2>
-            <img src="/qr.png" width="320"><br><br>
-            <a href="/">← Dashboard</a>
-        `);
+// Get QR Code
+app.get('/qr', async (req, res) => {
+    if (qrCodeData) {
+        res.json({ qr: qrCodeData });
+    } else if (isReady) {
+        res.json({ message: "Already Logged In" });
     } else {
-        res.send('QR abhi generate ho raha hai... Page ko 8-10 seconds baad refresh karo.');
+        res.json({ message: "QR generating... Refresh again" });
     }
 });
 
 // Send Text
 app.post('/send', async (req, res) => {
-    if (!isReady) return res.status(400).json({ error: "WhatsApp abhi ready nahi hai" });
+    if (!isReady) return res.status(400).json({ error: "WhatsApp not connected" });
 
     const { number, message } = req.body;
     try {
         const chatId = `${number}@c.us`;
         await client.sendMessage(chatId, message);
-        res.json({ success: true, msg: "Message bhej diya!" });
+        res.json({ success: true, status: "Sent" });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -100,7 +92,7 @@ app.post('/send', async (req, res) => {
 
 // Send Media
 app.post('/send-media', upload.single('file'), async (req, res) => {
-    if (!isReady) return res.status(400).json({ error: "WhatsApp not ready" });
+    if (!isReady) return res.status(400).json({ error: "WhatsApp not connected" });
 
     const { number, caption } = req.body;
     try {
@@ -108,7 +100,7 @@ app.post('/send-media', upload.single('file'), async (req, res) => {
         const chatId = `${number}@c.us`;
         await client.sendMessage(chatId, media, { caption: caption || "" });
         
-        fs.unlinkSync(req.file.path); // delete after send
+        fs.unlinkSync(req.file.path);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -117,6 +109,6 @@ app.post('/send-media', upload.single('file'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 API Running on port ${PORT}`);
     initializeClient();
 });
